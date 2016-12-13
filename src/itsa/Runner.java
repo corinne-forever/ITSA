@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Properties;
 import java.util.Scanner;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import org.bson.Document;
@@ -43,7 +44,7 @@ public class Runner {
   private static final String DATE_FORMAT = "yyyy-MM-dd";
   private static Date START_DATE, END_DATE;
   private static Twitter twitter = null;
-  private static final int PAGE_SIZE = 20;
+  private static final int PAGE_SIZE = 40;
   private static MongoClient mongoClient;
   private static MongoDatabase database;
   private static MongoCollection<Document> collection;
@@ -137,13 +138,12 @@ public class Runner {
   private static void initializeMongo() {
     // Change log level so stdout is not filled with log messages
     Logger mongoLogger = Logger.getLogger( "org.mongodb.driver" );
-    //mongoLogger.setLevel(Level.SEVERE); 
+    mongoLogger.setLevel(Level.SEVERE); 
     
     // Connect to DB
     System.out.println("Connecting to Mongo DB...");
     mongoClient = new MongoClient("127.0.0.1");
     database = mongoClient.getDatabase("tweets");
-    // System.out.println("Connected to Mongo DB successfully.");
 
     collection = database.getCollection("twitter");
   }
@@ -160,7 +160,6 @@ public class Runner {
                        + "3. Analyze twitter data with SentiStrength\n"
                        + "4. SAVE sentiment results to csv\n"
                        + "5. Exit\n");
-      // TODO update jobs to include normalization
       switch(reader.nextLine()) {
       case "1":
         collectAllStatuses();
@@ -209,8 +208,8 @@ public class Runner {
     Document doc = new Document()
         .append("username", username)
         .append("tweets", new ArrayList<>());
-    int tweetsRecordedInMongo = 0;
     collection.insertOne(doc); // Insert starter doc for user
+    
     Status status = getFirstStatusBefore(END_DATE, username);
     long maxId = status.getId() + 1; // Add one so the first status is included in paging.
     
@@ -219,22 +218,19 @@ public class Runner {
       List<Status> pagedStatuses = Collections.emptyList();
       Boolean reachedEnd = false;
       do {
-        handleUserTimeLineRateLimit();
-        pagedStatuses = twitter.getUserTimeline(username, new Paging(page, PAGE_SIZE, 1, maxId - 1));
+        handleUserTimelineRateLimit();
+        pagedStatuses = twitter.getUserTimeline(username, new Paging(page, PAGE_SIZE, page, maxId - 1));
         for (Status s : pagedStatuses) {
           if ((s.getCreatedAt()).before(START_DATE)) { // Stop if past the START date
             reachedEnd = true;
             break;
           }
           // Add status to Document
-          Document tweet = new Document()
-                                .append("text", s.getText())
-                                .append("date",s.getCreatedAt().toString());
-
-          collection.updateOne(Filters.eq("username", username),Updates.addToSet("tweets", tweet));
-          System.out.println(++tweetsRecordedInMongo + " tweets recorded to mongo so far");
-        }
-        
+          Document tweet = new Document("text", s.getText())
+                                .append("date", s.getCreatedAt().toString());
+          collection.updateOne(Filters.eq("username", username), Updates.addToSet("tweets", tweet));          
+        } 
+        page++;
       } while (!reachedEnd);
 
     } catch (TwitterException e) {
@@ -255,7 +251,7 @@ public class Runner {
 
     try {
       int page = 1; //Initial page
-      handleUserTimeLineRateLimit();
+      handleUserTimelineRateLimit();
       status = twitter.getUserTimeline(username, new Paging(1,1)).get(0); // Latest tweet
       // Edge case that the first tweet matches.
       if ((status.getCreatedAt()).before(date)) {
@@ -263,7 +259,7 @@ public class Runner {
       }
 
       do {
-        handleUserTimeLineRateLimit();
+        handleUserTimelineRateLimit();
         List<Status> statuses = twitter.getUserTimeline(username, new Paging(page, PAGE_SIZE, 1, status.getId() - 1));
         // iterate over statuses
         for (Status s : statuses) {
@@ -284,7 +280,7 @@ public class Runner {
     return status;
   }
   
-  private static void handleUserTimeLineRateLimit() {
+  private static void handleUserTimelineRateLimit() {
   //System.out.println("Remaining: " + twitter.getUserTimeline().getRateLimitStatus().getRemaining());
     try {
       if(twitter.getUserTimeline().getRateLimitStatus().getRemaining() <= 3){
