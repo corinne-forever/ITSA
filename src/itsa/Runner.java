@@ -3,6 +3,7 @@
  */
 package itsa;
 
+import java.io.Console;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -16,18 +17,10 @@ import java.util.List;
 import java.util.Properties;
 import java.util.Scanner;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-
-import org.bson.Document;
-
-import com.mongodb.MongoClient;
-import com.mongodb.client.MongoCollection;
-import com.mongodb.client.MongoDatabase;
-import com.mongodb.client.model.Filters;
-import com.mongodb.client.model.Updates;
 
 import twitter4j.Paging;
+import twitter4j.RateLimitStatus;
+import twitter4j.ResponseList;
 import twitter4j.Status;
 import twitter4j.Twitter;
 import twitter4j.TwitterException;
@@ -44,29 +37,34 @@ public class Runner {
   private static final String DATE_FORMAT = "yyyy-MM-dd";
   private static Date START_DATE, END_DATE;
   private static Twitter twitter = null;
-  private static final int PAGE_SIZE = 40;
-  private static MongoClient mongoClient;
-  private static MongoDatabase database;
-  private static MongoCollection<Document> collection;
+  private static final int PAGE_SIZE = 100;
+  private static TweetCSVWriter writer;
+  private static Console console;
 
+  // TODO refactor to use System.console()
+  
   /**
    * @param args
    */
   public static void main(String[] args) {
     initialize();    
-    runCLIInterface();
+    runCLI();
     shutdown();
   }
 
   /*
    * Initialization methods
    */
-  
+
   private static void initialize() {
+//    if ((console = System.console()) == null) {
+//      System.err.println("Unable to initialize console\n"
+//                       + "This may be because the program wasn't started interactively or the operating system doesn't support it");
+//    }
+        
     System.out.println("Initializing...");
     initializeITSAProperties();
-    initializeTwitterProperties();
-    initializeMongo();
+    initializeTwitter4j();
     System.out.println("Finished initializing");
   }
 
@@ -125,7 +123,9 @@ public class Runner {
     }
   }
 
-  private static void initializeTwitterProperties() {
+  
+  
+  private static void initializeTwitter4j() {
     try {
       twitter = TwitterFactory.getSingleton();
       twitter.verifyCredentials();
@@ -135,59 +135,41 @@ public class Runner {
     }
   }
 
-  private static void initializeMongo() {
-    // Change log level so stdout is not filled with log messages
-    Logger mongoLogger = Logger.getLogger( "org.mongodb.driver" );
-    mongoLogger.setLevel(Level.SEVERE); 
-    
-    // Connect to DB
-    System.out.println("Connecting to Mongo DB...");
-    mongoClient = new MongoClient("127.0.0.1");
-    database = mongoClient.getDatabase("tweets");
 
-    collection = database.getCollection("twitter");
-  }
-
-  private static void runCLIInterface() {
+  private static void runCLI() {
     Scanner reader = new Scanner(System.in); 
     Boolean shouldExit = false;
-    
+
     while (!shouldExit) {
-      System.out.println("Select a job: \n"
-                       + "1. Collect twitter data\n"
-                       + "1a. Drop twitter data from Mongo\n"
-                       + "2. Train SentiStrength\n"
-                       + "3. Analyze twitter data with SentiStrength\n"
-                       + "4. SAVE sentiment results to csv\n"
-                       + "5. Exit\n");
+      System.out.println("\nType the job you wish to run: \n"
+          + "view: View current parameters\n"
+          + "1: Collect twitter data\n"
+          + "2: Regularize and normalize data\n"
+          + "train: Train SentiStrength\n"
+          + "3: Analyze twitter data with SentiStrength\n"
+          + "exit: Exit\n");
       switch(reader.nextLine()) {
+      case "A":
+        System.out.println("Function not yet implemented, sorry.");
+        break;
       case "1":
+        // TODO prompt user for verification?
         collectAllStatuses();
         break;
-      case "1a":
-        System.out.println("Dropping twitter data");
-        collection.drop();
-        break;
       case "2":
-        // train sentrength
         System.out.println("Function not yet implemented, sorry.");
         break;
       case "3":
         // analyze data
         System.out.println("Function not yet implemented, sorry.");
         break;
-      case "4":
-        // CSV generation
-        System.out.println("Function not yet implemented, sorry.");
-        break;
-      case "5":
-        // exit
+
+      case "exit":
         reader.close();
-        System.out.println("EXITING");
         shouldExit = true;
         break;
       default:
-        System.out.println("Invalid input.");
+        System.err.println("Invalid input.");
         break;
       } 
     }
@@ -196,8 +178,9 @@ public class Runner {
   /*
    * Status collection methods
    */
-  
+
   private static void collectAllStatuses() {
+    // Initialize Tweet CSV Writer    
     for (String u : usernames) {
       System.out.println("Collecting Statuses for user: " + u);
       collectStatusesForUser(u);
@@ -205,37 +188,59 @@ public class Runner {
   }
 
   private static void collectStatusesForUser(String username) {
-    Document doc = new Document()
-        .append("username", username)
-        .append("tweets", new ArrayList<>());
-    collection.insertOne(doc); // Insert starter doc for user
+    try {
+      writer = new TweetCSVWriter("1-" + username + "-raw_data.csv");
+    } catch (IOException e) {
+      e.printStackTrace();
+      System.exit(1);
+    }
+    Status firstStatus = getFirstStatusBefore(END_DATE, username);
+    long maxId = firstStatus.getId() + 1; // Add one so the first status is included in paging.
     
-    Status status = getFirstStatusBefore(END_DATE, username);
-    long maxId = status.getId() + 1; // Add one so the first status is included in paging.
+    System.out.println("Getting statuses from " + username + " before " + END_DATE);
     
     try {
       int page = 1;
-      List<Status> pagedStatuses = Collections.emptyList();
+//      System.out.println("Collecting timeline page " + page + " for user " + username);
+      ResponseList<Status> statuses = twitter.getUserTimeline(username, new Paging(page, PAGE_SIZE, page, maxId - 1));
       Boolean reachedEnd = false;
+      
       do {
-        handleUserTimelineRateLimit();
-        pagedStatuses = twitter.getUserTimeline(username, new Paging(page, PAGE_SIZE, page, maxId - 1));
-        for (Status s : pagedStatuses) {
+        for (Status s : statuses) {
+          System.out.println(s.getText());
           if ((s.getCreatedAt()).before(START_DATE)) { // Stop if past the START date
             reachedEnd = true;
             break;
           }
-          // Add status to Document
-          Document tweet = new Document("text", s.getText())
-                                .append("date", s.getCreatedAt().toString());
-          collection.updateOne(Filters.eq("username", username), Updates.addToSet("tweets", tweet));          
+          try {
+            writer.recordStatus(s);
+          } catch (IOException e) {
+            System.err.println("Failed to write tweet: " + s.getText());
+            e.printStackTrace();
+          };
         } 
-        page++;
-      } while (!reachedEnd);
+        if (reachedEnd) {
+          // Don't bother loading a new set of statuses if we are done
+          break;
+        }
+        else {
+          page++;
+          handleUserTimelineRateLimit(statuses);
+//          System.out.println("Collecting timeline page " + page + " for user " + username);
+          statuses = twitter.getUserTimeline(username, new Paging(page, PAGE_SIZE, page, maxId - 1));
+        }        
+      } while (!reachedEnd && statuses.size() > 0); // Halt if end date is released or no more tweets are loaded
 
     } catch (TwitterException e) {
       System.err.println("Error in collectStatusesForUser:  " + username +":\n"
           + e.getErrorMessage());
+    }
+    
+    try {
+      writer.close();
+    } catch (IOException e) {
+      System.err.println("Failed to close TweetCSVWriter");
+      e.printStackTrace();
     }
   }
 
@@ -248,19 +253,12 @@ public class Runner {
    */
   private static Status getFirstStatusBefore(Date date, String username) {
     Status status = null;
-
+    System.out.println("Searching for first status from " + username + " before " + date);
     try {
       int page = 1; //Initial page
-      handleUserTimelineRateLimit();
-      status = twitter.getUserTimeline(username, new Paging(1,1)).get(0); // Latest tweet
-      // Edge case that the first tweet matches.
-      if ((status.getCreatedAt()).before(date)) {
-        return status;
-      }
+      ResponseList<Status> statuses = twitter.getUserTimeline(username, new Paging(1,1));
 
       do {
-        handleUserTimelineRateLimit();
-        List<Status> statuses = twitter.getUserTimeline(username, new Paging(page, PAGE_SIZE, 1, status.getId() - 1));
         // iterate over statuses
         for (Status s : statuses) {
           status = s;
@@ -268,7 +266,9 @@ public class Runner {
             return status;
           }
         }
+        handleUserTimelineRateLimit(statuses); // Wait if necessary
         page++;
+        statuses = twitter.getUserTimeline(username, new Paging(page, PAGE_SIZE, 1, status.getId() - 1));
       } while (!(status.getCreatedAt()).before(date));
 
     } catch (TwitterException e) {
@@ -279,78 +279,39 @@ public class Runner {
 
     return status;
   }
-  
-  private static void handleUserTimelineRateLimit() {
-  //System.out.println("Remaining: " + twitter.getUserTimeline().getRateLimitStatus().getRemaining());
+
+  private static void handleUserTimelineRateLimit(ResponseList<Status> rl) {
     try {
-      if(twitter.getUserTimeline().getRateLimitStatus().getRemaining() <= 3){
+      RateLimitStatus rateLimitStatus = rl.getRateLimitStatus();
+      
+      int secondsUntilReset = rateLimitStatus.getSecondsUntilReset();
+      if(rateLimitStatus.getRemaining() == 0){
         try {
-          System.out.println("Stopping for " + twitter.getUserTimeline().getRateLimitStatus().getSecondsUntilReset()
-                            + " seconds for rate limiting");
-          TimeUnit.SECONDS.sleep(twitter.getUserTimeline().getRateLimitStatus().getSecondsUntilReset() + 2);
-          System.out.println("Resuming operation after rate limit sleep");
+          System.out.println("Sleeping for " + secondsUntilReset + " seconds for rate limiting");
+          TimeUnit.SECONDS.sleep(secondsUntilReset + 2);
+          System.out.println("Done sleeping");
         } catch (InterruptedException e) {
           System.err.println("Something went wrong while sleeping");
           e.printStackTrace();
         }
       }
-    } catch (TwitterException e) {
-      System.err.println("Twitter error during Rate Limit check");
+    } 
+//    catch (TwitterException e) {
+//      System.err.println("Twitter error during Rate Limit check");
+//      e.printStackTrace();
+//    } 
+    catch (NullPointerException e) {
+      System.err.println("Null pointer exception during rate limiting. Sleeping for full duration.");
       e.printStackTrace();
     }
   }
 
-  /**
-   * Find the first status posted after @date by @username
-   * Does not handle edge cases properly :)
-   * Will return null if there are no tweets after a given date
-   * @param date
-   * @param username
-   * @return Status
-   */
-  private static Status getFirstStatusAfter(Date date, String username) {
-    Status status = null;
-    Status nextStatus = null;
-
-    try {
-      int page = 1; //Initial page
-      nextStatus = twitter.getUserTimeline(username, new Paging(1,1)).get(0); // Latest tweet
-      // Edge case that the first tweet matches.
-      if ((nextStatus.getCreatedAt()).before(date)) {
-        return null;
-      }
-
-      do {
-        List<Status> statuses = twitter.getUserTimeline(username, new Paging(page, PAGE_SIZE, 1, nextStatus.getId() - 1));
-        // iterate over statuses
-        for (Status s : statuses) {
-          status = nextStatus;
-          nextStatus = s;
-          if ((nextStatus.getCreatedAt()).before(date)) {
-            return status;
-          }
-        }
-        page++;
-      } while (!(nextStatus.getCreatedAt()).before(date));
-
-    } catch (TwitterException e) {
-      System.err.println("Error in getFirstStatusAfter:  " + date + ", " + username +":\n"
-          + e.getErrorMessage());
-      System.exit(1);
-    }
-    
-    return status;
-  }
-  
   /*
    * Shutdown methods
    */
-  
+
   private static void shutdown() {
-    shutdownMongo();
+    
   }
-  
-  private static void shutdownMongo() {
-    mongoClient.close();
-  }
+
 }
