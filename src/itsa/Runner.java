@@ -3,13 +3,14 @@
  */
 package itsa;
 
+import itsa.Util;
+
 import java.io.Console;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
@@ -39,9 +40,8 @@ public class Runner {
     private static Twitter twitter = null;
     private static final int PAGE_SIZE = 100;
     private static TweetCSVWriter writer;
-    private static Console console;
-
-    // TODO refactor to use System.console()
+    private static Scanner reader = new Scanner(System.in); 
+    
 
     /**
      * @param args
@@ -49,6 +49,7 @@ public class Runner {
     public static void main(String[] args) {
         initialize();    
         runCLI();
+        shutdown();
     }
 
     /*
@@ -56,15 +57,8 @@ public class Runner {
      */
 
     private static void initialize() {
-        //    if ((console = System.console()) == null) {
-        //      System.err.println("Unable to initialize console\n"
-        //                       + "This may be because the program wasn't started interactively or the operating system doesn't support it");
-        //    }
-
-        System.out.println("Initializing...");
         initializeITSAProperties();
         initializeTwitter4j();
-        System.out.println("Finished initializing");
     }
 
     private static void initializeITSAProperties() {
@@ -122,8 +116,6 @@ public class Runner {
         }
     }
 
-
-
     private static void initializeTwitter4j() {
         try {
             twitter = TwitterFactory.getSingleton();
@@ -134,12 +126,11 @@ public class Runner {
         }
     }
 
-
     private static void runCLI() {
-        Scanner reader = new Scanner(System.in); 
         Boolean shouldExit = false;
 
         while (!shouldExit) {
+            
             System.out.println("\nType the job you wish to run: \n"
                              + "view: View current parameters\n"
                              + "1: Collect twitter data\n"
@@ -186,8 +177,16 @@ public class Runner {
     }
 
     private static void collectStatusesForUser(String username) {
+        System.out.println("Collecting data for user " + username);
+        String filename = "1-" + username + "-raw_data.csv";
+        if (Util.fileExists(filename)) {
+            if (!yesNoDialog("The file \"" + filename + "\" already exists. Do you want to overwrite it? No new data will be collected otherwise.")) {
+                return;
+            }
+        }
+        
         try {
-            writer = new TweetCSVWriter("1-" + username + "-raw_data.csv");
+            writer = new TweetCSVWriter(filename);
         } catch (IOException e) {
             e.printStackTrace();
             System.exit(1);
@@ -205,7 +204,6 @@ public class Runner {
 
             do {
                 for (Status s : statuses) {
-                    System.out.println(s.getText());
                     if ((s.getCreatedAt()).before(START_DATE)) { // Stop if past the START date
                         reachedEnd = true;
                         break;
@@ -251,7 +249,7 @@ public class Runner {
      */
     private static Status getFirstStatusBefore(Date date, String username) {
         Status status = null;
-        System.out.println("Searching for first status from " + username + " before " + date);
+//        System.out.println("Searching for first status from " + username + " before " + date);
         try {
             int page = 1; //Initial page
             ResponseList<Status> statuses = twitter.getUserTimeline(username, new Paging(1,1));
@@ -298,5 +296,26 @@ public class Runner {
             System.err.println("Null pointer exception during rate limiting. Sleeping for full duration.");
             e.printStackTrace();
         }
+    }
+    
+    /**
+     * appends (y/n)? to message
+     * @param fmt
+     * @param args
+     * @return Returns true if the user responded yes, no otherwise
+     */
+    private static boolean yesNoDialog(String message) {
+        String response; 
+        
+        do {
+            System.out.println(message + " (y/n)?");
+            response = reader.nextLine();
+        }
+        while (!response.equals("y") && !response.equals("n"));
+        return response.equals("y");
+    }
+    
+    private static void shutdown() {
+        reader.close();
     }
 }
