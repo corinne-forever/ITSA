@@ -5,10 +5,11 @@ package itsa;
 
 import itsa.Util;
 
-import java.io.Console;
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
@@ -18,6 +19,10 @@ import java.util.List;
 import java.util.Properties;
 import java.util.Scanner;
 import java.util.concurrent.TimeUnit;
+
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
+import org.apache.commons.csv.CSVRecord;
 
 import twitter4j.Paging;
 import twitter4j.RateLimitStatus;
@@ -34,14 +39,30 @@ import twitter4j.TwitterFactory;
 public class Runner {
 
     private static final String ITSA_PROPERTIES = "itsa.properties";
-    private static List<String> usernames = Collections.emptyList();
-    private static final String DATE_FORMAT = "yyyy-MM-dd";
     private static Date START_DATE, END_DATE;
-    private static Twitter twitter = null;
-    private static final int PAGE_SIZE = 100;
-    private static TweetCSVWriter writer;
-    private static Scanner reader = new Scanner(System.in); 
+    private static final String DATE_FORMAT = "yyyy-MM-dd";
+    private static List<String> usernames = Collections.emptyList();
     
+    // CSV Headers
+    private static final String USERNAME_HEADER = "Username", 
+                                DATE_HEADER = "Date", 
+                                TWEET_ORIGINAL_HEADER = "Original Tweet",
+                                TWEET_SENTI_EXPLANATION_HEADER = "SentiStrength Explanation",
+                                TWEET_POS_SCORE = "Positive score",
+                                TWEET_NEG_SCORE = "Negative score";
+    private static final String[] headers = {USERNAME_HEADER, 
+                                             DATE_HEADER, 
+                                             TWEET_ORIGINAL_HEADER, 
+                                             TWEET_SENTI_EXPLANATION_HEADER, 
+                                             TWEET_POS_SCORE, 
+                                             TWEET_NEG_SCORE};
+    
+
+    private static Twitter twitter;
+    private static final int PAGE_SIZE = 100;
+    
+    private static TweetCSVWriter writer;
+    private static Scanner reader = new Scanner(System.in);     
 
     /**
      * @param args
@@ -126,6 +147,10 @@ public class Runner {
         }
     }
 
+    private static void shutdown() {
+        reader.close();
+    }
+    
     private static void runCLI() {
         Boolean shouldExit = false;
 
@@ -134,7 +159,7 @@ public class Runner {
             System.out.println("\nType the job you wish to run: \n"
                              + "view: View current parameters\n"
                              + "1: Collect twitter data\n"
-                             + "2: Regularize and normalize data\n"
+                             + "2: Tokenize tweets\n"
                              + "train: Train SentiStrength\n"
                              + "3: Analyze twitter data with SentiStrength\n"
                              + "exit: Exit\n");
@@ -142,15 +167,23 @@ public class Runner {
             case "A":
                 System.out.println("Function not yet implemented, sorry.");
                 break;
+
             case "1":
-                // TODO prompt user for verification?
-                collectAllStatuses();
+                System.out.println("Usernames to collect tweets from: " + usernames.toString());
+                if (yesNoDialog("Is this okay?")) {
+                    collectAllStatuses();
+                }
                 break;
+                
             case "2":
-                System.out.println("Function not yet implemented, sorry.");
+                System.out.println("WARNING: This phase currently applies no changes to the data.");
+                System.out.println("Usernames to tokenize tweets for: " + usernames.toString());
+                if (yesNoDialog("Is this okay?")) {
+                    tokenizeTweets();
+                }
                 break;
+                
             case "3":
-                // analyze data
                 System.out.println("Function not yet implemented, sorry.");
                 break;
 
@@ -158,6 +191,7 @@ public class Runner {
                 reader.close();
                 shouldExit = true;
                 break;
+
             default:
                 System.err.println("Invalid input.");
                 break;
@@ -177,8 +211,8 @@ public class Runner {
     }
 
     private static void collectStatusesForUser(String username) {
-        System.out.println("Collecting data for user " + username);
-        String filename = "1-" + username + "-raw_data.csv";
+        //System.out.println("Collecting data for user " + username);
+        String filename = getFilenameForPhaseUsername(1, username);
         if (Util.fileExists(filename)) {
             if (!yesNoDialog("The file \"" + filename + "\" already exists. Do you want to overwrite it? No new data will be collected otherwise.")) {
                 return;
@@ -188,9 +222,20 @@ public class Runner {
         try {
             writer = new TweetCSVWriter(filename);
         } catch (IOException e) {
+            System.err.println("Failed to create TweetCSVWriter for username: " + username);
             e.printStackTrace();
-            System.exit(1);
+            return;
         }
+        
+        //Print header
+        try {
+            writer.printRecord(USERNAME_HEADER, DATE_HEADER, TWEET_ORIGINAL_HEADER);
+        } catch (IOException e1) {
+            System.err.println("Failed to write header for username: " + username);
+            e1.printStackTrace();
+            return;
+        }
+        
         Status firstStatus = getFirstStatusBefore(END_DATE, username);
         long maxId = firstStatus.getId() + 1; // Add one so the first status is included in paging.
 
@@ -208,8 +253,11 @@ public class Runner {
                         reachedEnd = true;
                         break;
                     }
+                    
                     try {
-                        writer.recordStatus(s);
+                        writer.printRecord(s.getUser().getScreenName(),
+                                           s.getCreatedAt().toString(),
+                                           s.getText());
                     } catch (IOException e) {
                         System.err.println("Failed to write tweet: " + s.getText());
                         e.printStackTrace();
@@ -239,6 +287,7 @@ public class Runner {
             e.printStackTrace();
         }
     }
+
 
     /**
      * Find the first status posted before @date by @username
@@ -275,6 +324,7 @@ public class Runner {
 
         return status;
     }
+    
 
     private static void handleUserTimelineRateLimit(ResponseList<Status> rl) {
         try {
@@ -297,6 +347,73 @@ public class Runner {
             e.printStackTrace();
         }
     }
+
+    private static void tokenizeTweets() {
+        for (String u : usernames) {
+            System.out.println("Tokenizing tweets for user: " + u);
+            tokenizeTweetsforUser(u);
+        }
+    }
+    
+    private static void tokenizeTweetsforUser(String username) {
+        // TODO check that file exists
+        
+        // Open reader for raw data
+        String rawDataFilename = getFilenameForPhaseUsername(1, username);
+        File rawCSVData = new File(rawDataFilename);
+        CSVParser parser;
+        try {
+            parser = CSVParser.parse(rawCSVData, StandardCharsets.UTF_8, CSVFormat.EXCEL);
+        } catch (IOException e) {
+            System.err.println("Failed to create CSVParser for username: " + username);
+            e.printStackTrace();
+            return;
+        }
+        
+        // Open tokenized writer
+        String tokenizedDataFilename = getFilenameForPhaseUsername(2, username);
+        try {
+            @SuppressWarnings("unused")
+            TweetCSVWriter writer = new TweetCSVWriter(tokenizedDataFilename);
+        } catch (IOException e) {
+            System.err.println("Failed to create TweetCSVWriter for username: " + username);
+            e.printStackTrace();
+            return;
+        }
+        
+        // Process records and record tokenized results
+        for (CSVRecord csvRecord : parser) {
+            String date    = csvRecord.get(DATE_HEADER);
+            String rawText = csvRecord.get(TWEET_ORIGINAL_HEADER);
+            // remove urls
+            // remove mentions?
+            // write result
+            try {
+                writer.printRecord(username,
+                                   date,
+                                   rawText);
+            } catch (IOException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+        }
+        
+        try {         
+            parser.close();
+            writer.close();
+        } catch (IOException e) {
+            
+            e.printStackTrace();
+        }
+    }
+    
+    /*
+     * Utility methods
+     */
+    
+    private static void analyse() {
+        
+    }
     
     /**
      * appends (y/n)? to message
@@ -315,7 +432,22 @@ public class Runner {
         return response.equals("y");
     }
     
-    private static void shutdown() {
-        reader.close();
+    private static String getFilenameForPhaseUsername(int phase, String username) {
+        String suffix;
+        switch (phase) {
+        case 1:
+            suffix = "original";
+            break;     
+        case 2:
+            suffix = "tokenized";
+            break;    
+        case 3:
+            suffix = "sentiment";
+            break;
+        default:
+            return null;
+        }
+        
+        return phase + "-" + username + "-" + suffix + ".csv";
     }
 }

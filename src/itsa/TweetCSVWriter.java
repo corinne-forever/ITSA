@@ -9,6 +9,11 @@ import org.apache.commons.csv.CSVPrinter;
 
 import twitter4j.Status;
 
+/**
+ * A simple wrapper for the CSV Printer
+ * @author mdews
+ *
+ */
 public class TweetCSVWriter {
     FileWriter fw;
     BufferedWriter bw;
@@ -18,23 +23,18 @@ public class TweetCSVWriter {
         fw = new FileWriter(filename);
         bw = new BufferedWriter(fw);
         printer = new CSVPrinter(bw, CSVFormat.EXCEL);
-
-        printHeaders();
     }
 
-    private void printHeaders() throws IOException {
-        printer.print("Username");
-        printer.print("Date");
-        printer.print("Text");
+    public void print(Object value) throws IOException {
+        printer.print(value); 
+    }
+    
+    public void println() throws IOException {
         printer.println();
     }
-
-    public void recordStatus(Status status) throws IOException {
-        printer.print(status.getUser().getScreenName());
-        printer.print(status.getCreatedAt().toString());
-        printer.print(status.getText());
-        printer.println();
-
+    
+    public void printRecord(Object... values) throws IOException {
+        printer.printRecord(values);
     }
 
     public void close() throws IOException {
