@@ -1,3 +1,10 @@
+# ITSA files and folders
+lib/
+lib/sentistrength_data
+twitter4j.properties
+*.csv
+
+# Eclipse files and folders
 .metadata
 bin/
 tmp/
@@ -24,6 +31,3 @@ local.properties
 
 # Java annotation processor (APT)
 .factorypath
-
-lib/
-twitter4j.properties
