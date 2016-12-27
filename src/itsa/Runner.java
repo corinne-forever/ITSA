@@ -42,7 +42,7 @@ public class Runner {
     
     // CSV Headers
     private static final String USERNAME_HEADER = "Username", 
-                                DATE_HEADER = "Date", 
+                                DATE_HEADER = "Date Time",
                                 TWEET_ORIGINAL_HEADER = "Original Tweet",
                                 TWEET_TOKENIZED_HEADER = "Tokenized tweet",
                                 TWEET_POS_SCORE = "Positive score",
@@ -50,7 +50,7 @@ public class Runner {
                                 TWEET_SENTI_EXPLANATION_HEADER = "SentiStrength Explanation";
                                 
     private static final String[] headers = {USERNAME_HEADER, 
-                                             DATE_HEADER, 
+                                             DATE_HEADER,
                                              TWEET_ORIGINAL_HEADER, 
                                              TWEET_TOKENIZED_HEADER,
                                              TWEET_POS_SCORE, 
@@ -67,6 +67,8 @@ public class Runner {
     
     private static SentiStrength sentiStrength;
     private static String[] sentiStrengthParameters =  {"sentidata", "./lib/sentistrength_data/", "explain"};
+    
+    private static SimpleDateFormat dateTimeExcelFormat = new SimpleDateFormat("YYYY-MM-dd HH:mm");
 
     /**
      * @param args
@@ -280,7 +282,7 @@ public class Runner {
                     
                     try {
                         writer.printRecord(s.getUser().getScreenName(),
-                                           s.getCreatedAt().toString(),
+                                           dateTimeExcelFormat.format(s.getCreatedAt()),
                                            s.getText());
                     } catch (IOException e) {
                         System.err.println("Failed to write tweet: " + s.getText());
@@ -371,7 +373,7 @@ public class Runner {
             e.printStackTrace();
         }
     }
-
+    
     private static String getPostiveScore(String s) {
         return s.substring(0, 1);
     }
