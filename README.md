@@ -23,7 +23,8 @@ These stages are as follows:
 3. Sentiment analysis
 	* Positive and negative scores are calculated for each tweet
 
-## Limitations
+## Limitations/Future Work
 * The twitter API limits the number of tweets that can be collected from a user to 3200
 * No modularity in first phase, must be done manually
 * Limited configuration options. Most tweaks will need to be made in the code.
+* Access to CSV fields is done by index (0, 1, 2... etc). Doing it by header would mitigate many issues
