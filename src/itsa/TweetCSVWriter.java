@@ -33,6 +33,10 @@ public class TweetCSVWriter {
         printer.println();
     }
     
+    public void printRecord(Iterable<?> arg0) throws IOException {
+        printer.printRecord(arg0);
+    }
+    
     public void printRecord(Object... values) throws IOException {
         printer.printRecord(values);
     }

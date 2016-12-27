@@ -4,14 +4,14 @@
 package itsa;
 
 import itsa.Util;
+import itsa.phases.Phase;
 
-import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
@@ -20,10 +20,6 @@ import java.util.Properties;
 import java.util.Scanner;
 import java.util.concurrent.TimeUnit;
 
-import org.apache.commons.csv.CSVFormat;
-import org.apache.commons.csv.CSVParser;
-import org.apache.commons.csv.CSVRecord;
-
 import twitter4j.Paging;
 import twitter4j.RateLimitStatus;
 import twitter4j.ResponseList;
@@ -31,6 +27,7 @@ import twitter4j.Status;
 import twitter4j.Twitter;
 import twitter4j.TwitterException;
 import twitter4j.TwitterFactory;
+import uk.ac.wlv.sentistrength.SentiStrength;
 
 /**
  * @author Matthew Dews
@@ -47,22 +44,29 @@ public class Runner {
     private static final String USERNAME_HEADER = "Username", 
                                 DATE_HEADER = "Date", 
                                 TWEET_ORIGINAL_HEADER = "Original Tweet",
-                                TWEET_SENTI_EXPLANATION_HEADER = "SentiStrength Explanation",
+                                TWEET_TOKENIZED_HEADER = "Tokenized tweet",
                                 TWEET_POS_SCORE = "Positive score",
-                                TWEET_NEG_SCORE = "Negative score";
+                                TWEET_NEG_SCORE = "Negative score",
+                                TWEET_SENTI_EXPLANATION_HEADER = "SentiStrength Explanation";
+                                
     private static final String[] headers = {USERNAME_HEADER, 
                                              DATE_HEADER, 
                                              TWEET_ORIGINAL_HEADER, 
-                                             TWEET_SENTI_EXPLANATION_HEADER, 
+                                             TWEET_TOKENIZED_HEADER,
                                              TWEET_POS_SCORE, 
-                                             TWEET_NEG_SCORE};
+                                             TWEET_NEG_SCORE,
+                                             TWEET_SENTI_EXPLANATION_HEADER
+                                            };
     
 
     private static Twitter twitter;
     private static final int PAGE_SIZE = 100;
     
     private static TweetCSVWriter writer;
-    private static Scanner reader = new Scanner(System.in);     
+    private static Scanner reader = Util.reader;
+    
+    private static SentiStrength sentiStrength;
+    private static String[] sentiStrengthParameters =  {"sentidata", "./lib/sentistrength_data/", "explain"};
 
     /**
      * @param args
@@ -80,6 +84,8 @@ public class Runner {
     private static void initialize() {
         initializeITSAProperties();
         initializeTwitter4j();
+        initializeSentiStrength();
+        initializePhases();
     }
 
     private static void initializeITSAProperties() {
@@ -147,6 +153,34 @@ public class Runner {
         }
     }
 
+    private static void initializeSentiStrength() {
+        sentiStrength = new SentiStrength();
+        sentiStrength.initialise(sentiStrengthParameters);
+    }
+    
+    @SuppressWarnings("unused") // The phases are added to the static list of phases
+    private static void initializePhases() { 
+        Phase phase1 = new Phase(1, "original", null); // we handle the first phase ourselves
+        Phase phase2 = new Phase(2, "tokenized", 
+                (ArrayList<String> record) -> {
+                                               String original = record.get(2);
+                                               original = Util.removeUrl(original);
+                                               record.add(3, original);
+                                               return record;
+                                               }
+                );
+        Phase phase3 = new Phase(3, "sentiment",
+                (ArrayList<String> record) -> {
+                                               String tokenizedText = record.get(3);
+                                               String explanation = sentiStrength.computeSentimentScores(tokenizedText);
+                                               record.add(4, getPostiveScore(explanation));
+                                               record.add(5, getNegativeScore(explanation));
+                                               record.add(6, removeScore(explanation));
+                                               return record;
+                                               }                
+                );
+    }
+    
     private static void shutdown() {
         reader.close();
     }
@@ -157,34 +191,26 @@ public class Runner {
         while (!shouldExit) {
             
             System.out.println("\nType the job you wish to run: \n"
-                             + "view: View current parameters\n"
                              + "1: Collect twitter data\n"
                              + "2: Tokenize tweets\n"
-                             + "train: Train SentiStrength\n"
                              + "3: Analyze twitter data with SentiStrength\n"
                              + "exit: Exit\n");
             switch(reader.nextLine()) {
-            case "A":
-                System.out.println("Function not yet implemented, sorry.");
-                break;
-
             case "1":
-                System.out.println("Usernames to collect tweets from: " + usernames.toString());
-                if (yesNoDialog("Is this okay?")) {
-                    collectAllStatuses();
-                }
+                System.out.println("Collecting tweets from users: " + usernames.toString());
+                collectAllStatuses();
                 break;
                 
             case "2":
-                System.out.println("WARNING: This phase currently applies no changes to the data.");
-                System.out.println("Usernames to tokenize tweets for: " + usernames.toString());
-                if (yesNoDialog("Is this okay?")) {
-                    tokenizeTweets();
-                }
+                System.out.println("WARNING: This phase currently applies no changes to the data, "
+                                 + "but is still a prerequisite for the next stage.");
+                System.out.println("Tokenizing tweets for users: " + usernames.toString());
+                Phase.runPhase(2, usernames);
                 break;
                 
             case "3":
-                System.out.println("Function not yet implemented, sorry.");
+                System.out.println("Computing sentiment strength for users: " + usernames.toString());
+                Phase.runPhase(3, usernames);
                 break;
 
             case "exit":
@@ -212,11 +238,9 @@ public class Runner {
 
     private static void collectStatusesForUser(String username) {
         //System.out.println("Collecting data for user " + username);
-        String filename = getFilenameForPhaseUsername(1, username);
-        if (Util.fileExists(filename)) {
-            if (!yesNoDialog("The file \"" + filename + "\" already exists. Do you want to overwrite it? No new data will be collected otherwise.")) {
-                return;
-            }
+        String filename = Phase.getFilenameForPhaseUsername(1, username);
+        if (!Util.fileExistsDialog(filename)) {
+            return;
         }
         
         try {
@@ -229,7 +253,7 @@ public class Runner {
         
         //Print header
         try {
-            writer.printRecord(USERNAME_HEADER, DATE_HEADER, TWEET_ORIGINAL_HEADER);
+            writer.printRecord((Object[])headers);
         } catch (IOException e1) {
             System.err.println("Failed to write header for username: " + username);
             e1.printStackTrace();
@@ -348,106 +372,15 @@ public class Runner {
         }
     }
 
-    private static void tokenizeTweets() {
-        for (String u : usernames) {
-            System.out.println("Tokenizing tweets for user: " + u);
-            tokenizeTweetsforUser(u);
-        }
+    private static String getPostiveScore(String s) {
+        return s.substring(0, 1);
     }
     
-    private static void tokenizeTweetsforUser(String username) {
-        // TODO check that file exists
-        
-        // Open reader for raw data
-        String rawDataFilename = getFilenameForPhaseUsername(1, username);
-        File rawCSVData = new File(rawDataFilename);
-        CSVParser parser;
-        try {
-            parser = CSVParser.parse(rawCSVData, StandardCharsets.UTF_8, CSVFormat.EXCEL);
-        } catch (IOException e) {
-            System.err.println("Failed to create CSVParser for username: " + username);
-            e.printStackTrace();
-            return;
-        }
-        
-        // Open tokenized writer
-        String tokenizedDataFilename = getFilenameForPhaseUsername(2, username);
-        try {
-            @SuppressWarnings("unused")
-            TweetCSVWriter writer = new TweetCSVWriter(tokenizedDataFilename);
-        } catch (IOException e) {
-            System.err.println("Failed to create TweetCSVWriter for username: " + username);
-            e.printStackTrace();
-            return;
-        }
-        
-        // Process records and record tokenized results
-        for (CSVRecord csvRecord : parser) {
-            String date    = csvRecord.get(DATE_HEADER);
-            String rawText = csvRecord.get(TWEET_ORIGINAL_HEADER);
-            // remove urls
-            // remove mentions?
-            // write result
-            try {
-                writer.printRecord(username,
-                                   date,
-                                   rawText);
-            } catch (IOException e) {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
-            }
-        }
-        
-        try {         
-            parser.close();
-            writer.close();
-        } catch (IOException e) {
-            
-            e.printStackTrace();
-        }
+    private static String getNegativeScore(String s) {
+        return s.substring(2, 4);
     }
     
-    /*
-     * Utility methods
-     */
-    
-    private static void analyse() {
-        
-    }
-    
-    /**
-     * appends (y/n)? to message
-     * @param fmt
-     * @param args
-     * @return Returns true if the user responded yes, no otherwise
-     */
-    private static boolean yesNoDialog(String message) {
-        String response; 
-        
-        do {
-            System.out.println(message + " (y/n)?");
-            response = reader.nextLine();
-        }
-        while (!response.equals("y") && !response.equals("n"));
-        return response.equals("y");
-    }
-    
-    private static String getFilenameForPhaseUsername(int phase, String username) {
-        String suffix;
-        switch (phase) {
-        case 1:
-            suffix = "original";
-            break;     
-        case 2:
-            suffix = "tokenized";
-            break;    
-        case 3:
-            suffix = "sentiment";
-            break;
-        default:
-            return null;
-        }
-        
-        return phase + "-" + username + "-" + suffix + ".csv";
+    private static String removeScore(String s) {
+        return s.substring(5);
     }
 }

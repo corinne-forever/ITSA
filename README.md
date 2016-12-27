@@ -25,5 +25,5 @@ These stages are as follows:
 
 ## Limitations
 * The twitter API limits the number of tweets that can be collected from a user to 3200
-* Limited modularity in the current implementation of ITSA.
+* No modularity in first phase, must be done manually
 * Limited configuration options. Most tweaks will need to be made in the code.
