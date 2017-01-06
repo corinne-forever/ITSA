@@ -5,7 +5,6 @@ ITSA is a tool for collecting tweets from specific twitter users and applying se
 It is recommended that you place the dependencies in a folder called `lib`, otherwise you will need to change some code for SentiStrength.
 
 * [Twitter4J 4.0.4](http://twitter4j.org/archive/twitter4j-4.0.4.zip)
-* [Stanford CoreNLP 3.6.0](http://nlp.stanford.edu/software/stanford-corenlp-full-2015-12-09.zip)
 * [Apache Commons CSV 1.4](https://commons.apache.org/proper/commons-csv/download_csv.cgi)
 * [SentiStrength](http://sentistrength.wlv.ac.uk/)
 	* SentiStrength Dec 2015 Data - place in `lib/sentistrength_data` or modify the code accordingly
@@ -19,11 +18,13 @@ These stages are as follows:
 1. Data collection
 	* Tweets are collected from twitter from the users defined in `itsa.properties`
 2. Normalization
-	* Tweets are stripped of their links, case, mentions, setc and hashtags
+	* Tweets are stripped of their links
 3. Sentiment analysis
 	* Positive and negative scores are calculated for each tweet
 
 ## Limitations/Future Work
+Those interested in continuing the work of this project should read the Future Work section of the paper in the `data and paper` zip file. Here are a few relating to implementation:
+
 * The twitter API limits the number of tweets that can be collected from a user to 3200
 * No modularity in first phase, must be done manually
 * Limited configuration options. Most tweaks will need to be made in the code.

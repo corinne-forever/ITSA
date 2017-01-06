@@ -162,6 +162,8 @@ public class Runner {
     
     @SuppressWarnings("unused") // The phases are added to the static list of phases
     private static void initializePhases() { 
+        Phase.usernames = usernames; // give phases username list
+        
         Phase phase1 = new Phase(1, "original", null); // we handle the first phase ourselves
         Phase phase2 = new Phase(2, "tokenized", 
                 (ArrayList<String> record) -> {
@@ -196,6 +198,7 @@ public class Runner {
                              + "1: Collect twitter data\n"
                              + "2: Tokenize tweets\n"
                              + "3: Analyze twitter data with SentiStrength\n"
+                             + "3a: Combine data into one file"
                              + "exit: Exit\n");
             switch(reader.nextLine()) {
             case "1":
@@ -207,14 +210,18 @@ public class Runner {
                 System.out.println("WARNING: This phase currently applies no changes to the data, "
                                  + "but is still a prerequisite for the next stage.");
                 System.out.println("Tokenizing tweets for users: " + usernames.toString());
-                Phase.runPhase(2, usernames);
+                Phase.runPhase(2);
                 break;
                 
             case "3":
                 System.out.println("Computing sentiment strength for users: " + usernames.toString());
-                Phase.runPhase(3, usernames);
+                Phase.runPhase(3);
                 break;
-
+            
+            case "3a":
+                Phase.combinePhaseResults(3);
+                break;
+            
             case "exit":
                 reader.close();
                 shouldExit = true;
